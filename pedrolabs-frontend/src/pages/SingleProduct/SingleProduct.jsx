@@ -15,7 +15,7 @@ function SingleProduct() {
   const [userName, setUserName] = useState("");
   const [cart, setCart] = useState({});
 
-  const baseURL = "petrotestapi.vercel.app";
+  const baseURL = "https://petrotestapi.vercel.app";
 
   useEffect(() => {
     const name = sessionStorage.getItem("userName");

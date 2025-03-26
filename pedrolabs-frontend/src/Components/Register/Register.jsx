@@ -9,7 +9,7 @@ const SignInSignUpForm = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [registerStatus, setRegisterStatus] = useState("");
-  const baseURL = "petrotestapi.vercel.app"; // Backend API URL
+  const baseURL = "https://petrotestapi.vercel.app"; // Backend API URL
 
   const register = (e) => {
     e.preventDefault();

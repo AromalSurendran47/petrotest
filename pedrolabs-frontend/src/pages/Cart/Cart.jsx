@@ -15,7 +15,7 @@ import axios from "axios";
 
 function Cart() {
   const [cartItems, setCartItems] = useState([]);
-  const baseURL = "petrotestapi.vercel.app";
+  const baseURL = "https://petrotestapi.vercel.app";
 
   // fetch products
 
