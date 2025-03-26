@@ -1,11 +1,11 @@
 const express = require("express");
-const mysql = require("mysql");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const multer = require("multer");
 const path = require("path");
-const bcrypt = require("bcryptjs"); // Correct bcrypt module
-require("dotenv").config();
+const bcrypt = require("bcryptjs");
+const mongoose = require("mongoose");
+const jwt = require("jsonwebtoken");
 
 const app = express();
 app.use(express.json());
@@ -16,494 +16,369 @@ app.use("/uploads", express.static("uploads"));
 app.use(
   cors({
     methods: ["GET", "POST", "PUT", "DELETE"],
-    origin:["https://petrotest-main.vercel.app"],
+    origin: ["https://petrotest-main.vercel.app", "http://localhost:3000"],
     allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true
   })
 );
 
-// MySQL Connection Pool
-const pool = mysql.createPool({
-  connectionLimit: 10,
-  user: "root",
-  host: "localhost",
-  password: "Admin123", // Update with your credentials
-  database: "pedrolabsdb",
+// MongoDB Connection
+mongoose.connect("mongodb+srv://admin:Admin123@cluster0.ikqiz.mongodb.net/pedro", {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+}).then(() => {
+  console.log("Connected to MongoDB");
+}).catch((err) => {
+  console.error("MongoDB connection error:", err);
 });
 
-// ********** User Registration **********
+// Define MongoDB Schemas
+const userSchema = new mongoose.Schema({
+  fname: String,
+  lname: String,
+  email: { type: String, unique: true },
+  password: String,
+  role: { type: String, default: 'user' }
+});
+
+const productSchema = new mongoose.Schema({
+  name: String,
+  details: String,
+  originalprice: Number,
+  offerprice: Number,
+  image: String
+});
+
+const cartSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+  quantity: Number
+});
+
+// Create MongoDB Models
+const User = mongoose.model('User', userSchema);
+const Product = mongoose.model('Product', productSchema);
+const Cart = mongoose.model('Cart', cartSchema);
+
+// User Registration
 app.post("/register", async (req, res) => {
-  const { fname, lname, email, password } = req.body;
+  try {
+    const { fname, lname, email, password } = req.body;
 
-  if (!fname || !lname || !email || !password) {
-    return res
-      .status(400)
-      .json({ success: false, message: "All fields are required." });
+    if (!fname || !lname || !email || !password) {
+      return res.status(400).json({ success: false, message: "All fields are required." });
+    }
+
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: "Email already registered." });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = new User({
+      fname,
+      lname,
+      email,
+      password: hashedPassword
+    });
+
+    await user.save();
+    res.status(201).json({ success: true, message: "Registration successful." });
+  } catch (error) {
+    console.error("Registration error:", error);
+    res.status(500).json({ success: false, message: "Server error." });
   }
-
-  const checkEmailQuery = `SELECT * FROM register WHERE email = ?`;
-  pool.query(checkEmailQuery, [email], async (err, results) => {
-    if (err) {
-      console.error("Error querying database:", err);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error." });
-    }
-
-    if (results.length > 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Email already exists." });
-    }
-
-    try {
-      const hashedPassword = await bcrypt.hash(password, 10);
-
-      // Automatically assign role based on email
-      const role = email === "admin@gmail.com" ? "admin" : "user";
-
-      const sql = `INSERT INTO register (fname, lname, email, password, role) VALUES (?, ?, ?, ?, ?)`;
-      pool.query(
-        sql,
-        [fname, lname, email, hashedPassword, role],
-        (err, result) => {
-          if (err) {
-            console.error("Error inserting into database:", err);
-            return res
-              .status(500)
-              .json({ success: false, message: "Database error." });
-          }
-          res.status(200).json({
-            success: true,
-            message: "User registered successfully.",
-            role: role,
-          });
-        }
-      );
-    } catch (error) {
-      console.error("Error hashing password:", error);
-      res.status(500).json({ success: false, message: "Server error." });
-    }
-  });
 });
 
-// ********** User Login **********
-const jwt = require("jsonwebtoken");
+// User Login
+app.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
 
-app.post("/login", (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password)
-    return res
-      .status(400)
-      .json({ success: false, message: "All fields are required." });
-
-  pool.query(
-    "SELECT * FROM register WHERE email = ?",
-    [email],
-    async (err, results) => {
-      if (err)
-        return res
-          .status(500)
-          .json({ success: false, message: "Database error." });
-
-      if (results.length === 0)
-        return res
-          .status(401)
-          .json({ success: false, message: "Invalid email or password." });
-
-      const user = results[0];
-      const passwordMatch = await bcrypt.compare(password, user.password);
-      if (!passwordMatch)
-        return res
-          .status(401)
-          .json({ success: false, message: "Invalid email or password." });
-
-      // Generate JWT token
-      const token = jwt.sign(
-        { userId: user.id, email: user.email, role: user.role },
-        process.env.JWT_SECRET,
-        { expiresIn: process.env.JWT_EXPIRES_IN }
-      );
-
-      res.status(200).json({
-        success: true,
-        message: "Login successful.",
-        token,
-        user: {
-          id: user.id,
-          fname: user.fname,
-          lname: user.lname,
-          email: user.email,
-          role: user.role,
-        },
-      });
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: "All fields are required." });
     }
-  );
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ success: false, message: "Invalid email or password." });
+    }
+
+    const passwordMatch = await bcrypt.compare(password, user.password);
+    if (!passwordMatch) {
+      return res.status(401).json({ success: false, message: "Invalid email or password." });
+    }
+
+    const token = jwt.sign(
+      { userId: user._id, email: user.email, role: user.role },
+      "your-secret-key",
+      { expiresIn: "24h" }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Login successful.",
+      token,
+      user: {
+        id: user._id,
+        fname: user.fname,
+        lname: user.lname,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({ success: false, message: "Server error." });
+  }
 });
 
+// Verify Token
 const verifyToken = (req, res, next) => {
   const token = req.headers.authorization;
-  if (!token)
+  if (!token) {
     return res.status(403).json({ success: false, message: "Access denied." });
+  }
 
-  jwt.verify(token.split(" ")[1], process.env.JWT_SECRET, (err, decoded) => {
-    if (err)
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid token." });
+  jwt.verify(token.split(" ")[1], "your-secret-key", (err, decoded) => {
+    if (err) {
+      return res.status(401).json({ success: false, message: "Invalid token." });
+    }
 
-    req.user = decoded; // Attach user data to request object
+    req.user = decoded;
     next();
   });
 };
 
+// Verify Admin
 const verifyAdmin = (req, res, next) => {
-  if (req.user.role !== "admin")
-    return res
-      .status(403)
-      .json({ success: false, message: "Admin access required." });
-
+  if (req.user.role !== "admin") {
+    return res.status(403).json({ success: false, message: "Admin access required." });
+  }
   next();
 };
 
-// app.delete("/delete/:id", verifyToken, verifyAdmin, (req, res) => {
-//   pool.query(
-//     "DELETE FROM register WHERE id = ?",
-//     [req.params.id],
-//     (err, result) => {
-//       if (err)
-//         return res
-//           .status(500)
-//           .json({ success: false, message: "Database error" });
-//       res.json({ success: true, message: "User deleted successfully." });
-//     }
-//   );
-// });
-
-// ********** CRUD Operations for Users **********
-app.get("/getusers", verifyToken, verifyAdmin, (req, res) => {
-  pool.query("SELECT * FROM register", (err, results) => {
-    if (err)
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    res.status(200).json({ success: true, data: results });
-  });
-});
-
-app.delete("/delete/:id", verifyToken, verifyAdmin, (req, res) => {
-  pool.query(
-    "DELETE FROM register WHERE id = ?",
-    [req.params.id],
-    (err, result) => {
-      if (err)
-        return res
-          .status(500)
-          .json({ success: false, message: "Database error" });
-      res.json({ success: true, message: "User deleted successfully." });
-    }
-  );
-});
-
-app.put("/update/:id", verifyToken, (req, res) => {
-  const { fname, lname, email } = req.body;
-  if (!fname || !lname || !email)
-    return res
-      .status(400)
-      .json({ success: false, message: "All fields are required." });
-
-  pool.query(
-    "UPDATE register SET fname = ?, lname = ?, email = ? WHERE id = ?",
-    [fname, lname, email, req.params.id],
-    (err, result) => {
-      if (err)
-        return res
-          .status(500)
-          .json({ success: false, message: "Database error." });
-      if (result.affectedRows === 0)
-        return res
-          .status(404)
-          .json({ success: false, message: "User not found." });
-      res
-        .status(200)
-        .json({ success: true, message: "User updated successfully." });
-    }
-  );
-});
-
-// ********** Image Upload Configuration **********
+// File Upload Configuration
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, "uploads/"),
+  destination: (req, file, cb) => {
+    cb(null, "uploads/");
+  },
   filename: (req, file, cb) => {
-    const uniqueSuffix =
-      Date.now() +
-      "-" +
-      Math.round(Math.random() * 1e9) +
-      path.extname(file.originalname);
-    cb(null, file.fieldname + "-" + uniqueSuffix);
+    cb(null, Date.now() + path.extname(file.originalname));
   },
 });
 
 const fileFilter = (req, file, cb) => {
-  if (file.mimetype.startsWith("image/")) cb(null, true);
-  else cb(new Error("Only image files are allowed."), false);
+  if (file.mimetype.startsWith("image/")) {
+    cb(null, true);
+  } else {
+    cb(new Error("Not an image! Please upload an image."), false);
+  }
 };
 
 const upload = multer({ storage, fileFilter });
 
-// ********** Product Management **********
-app.post("/product", upload.single("image"), verifyToken, (req, res) => {
-  const { name, details, originalprice, offerprice } = req.body;
-  const image = req.file ? req.file.filename : null;
-
-  if (!name || !details || !originalprice || !offerprice || !image) {
-    return res.status(400).json({ error: "All fields are required." });
-  }
-
-  pool.query(
-    "INSERT INTO products (name, details, originalprice, offerprice, image) VALUES (?, ?, ?, ?, ?)",
-    [name, details, originalprice, offerprice, image],
-    (err, result) => {
-      if (err) {
-        console.error("Database Insert Error:", err); // Log error
-        return res
-          .status(500)
-          .json({ error: "Failed to add product", details: err.message });
-      }
-      res.json({
-        message: "Product added successfully",
-        productId: result.insertId,
-      });
-    }
-  );
-});
-
-app.get("/getproducts", (req, res) => {
-  pool.query("SELECT * FROM products", (err, results) => {
-    if (err)
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    res.status(200).json({ success: true, data: results });
-  });
-});
-
-app.delete("/deleteproduct/:id", verifyToken, verifyAdmin, (req, res) => {
-  pool.query(
-    "DELETE FROM products WHERE id = ?",
-    [req.params.id],
-    (err, result) => {
-      if (err)
-        return res
-          .status(500)
-          .json({ success: false, message: "Database error" });
-      res.json({ success: true, message: "Product deleted successfully." });
-    }
-  );
-});
-
-app.put(
-  "/updateproduct/:id",
-  upload.single("image"),
-  verifyToken,
-  (req, res) => {
+// Product Management
+app.post("/product", upload.single("image"), async (req, res) => {
+  try {
     const { name, details, originalprice, offerprice } = req.body;
     const image = req.file ? req.file.filename : null;
 
-    if (!name || !details || !originalprice || !offerprice)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "All fields except image are required.",
-        });
+    const product = new Product({
+      name,
+      details,
+      originalprice,
+      offerprice,
+      image
+    });
 
-    // First, get the current image filename from the database
-    pool.query(
-      "SELECT image FROM products WHERE id = ?",
-      [req.params.id],
-      (err, rows) => {
-        if (err) {
-          return res
-            .status(500)
-            .json({ success: false, message: "Database error." });
-        }
-        if (rows.length === 0) {
-          return res
-            .status(404)
-            .json({ success: false, message: "Product not found." });
-        }
-
-        const oldImage = rows[0].image;
-        const finalImage = image || oldImage; // Keep the old image if no new one is provided
-
-        // Update the product details
-        pool.query(
-          "UPDATE products SET name = ?, details = ?, originalprice = ?, offerprice = ?, image = ? WHERE id = ?",
-          [name, details, originalprice, offerprice, finalImage, req.params.id],
-          (updateErr, result) => {
-            if (updateErr) {
-              return res
-                .status(500)
-                .json({ success: false, message: "Database error." });
-            }
-            if (result.affectedRows === 0) {
-              return res
-                .status(404)
-                .json({ success: false, message: "Product not found." });
-            }
-            res
-              .status(200)
-              .json({
-                success: true,
-                message: "Product updated successfully.",
-              });
-          }
-        );
-      }
-    );
+    await product.save();
+    res.status(201).json({ success: true, message: "Product added successfully." });
+  } catch (error) {
+    console.error("Product creation error:", error);
+    res.status(500).json({ success: false, message: "Server error." });
   }
-);
-
-app.get("/getproduct/:id", (req, res) => {
-  const productId = req.params.id;
-
-  pool.query(
-    "SELECT * FROM products WHERE id = ?",
-    [productId],
-    (err, results) => {
-      if (err) {
-        console.error("Database Error:", err);
-        return res.status(500).json({ error: "Internal server error" });
-      }
-
-      if (results.length === 0) {
-        return res.status(404).json({ error: "Product not found" });
-      }
-
-      res.json(results[0]); // Return the first (and only) product object
-    }
-  );
 });
 
-// ********** save the cart data **********
-app.post("/addtocart", verifyToken, (req, res) => {
-  const { productId, quantity } = req.body;
-  const userId = req.user?.userId; // Ensure userId is being received
-
-  console.log("Received add to cart request:", { userId, productId, quantity });
-
-  if (!productId || !quantity) {
-    console.error("Missing productId or quantity");
-    return res.status(400).json({ success: false, message: "Product and quantity are required." });
+// Get Products
+app.get("/getproducts", async (req, res) => {
+  try {
+    const products = await Product.find();
+    res.json({ success: true, data: products });
+  } catch (error) {
+    console.error("Error fetching products:", error);
+    res.status(500).json({ success: false, message: "Server error." });
   }
-
-  // Check if the product is already in the cart
-  pool.query(
-    "SELECT * FROM carts WHERE user_id = ? AND product_id = ?",
-    [userId, productId],
-    (err, results) => {
-      if (err) {
-        console.error("Database error in SELECT query:", err);
-        return res.status(500).json({ success: false, message: "Database error." });
-      }
-
-      if (results.length > 0) {
-        // If product exists, update quantity
-        pool.query(
-          "UPDATE carts SET quantity = quantity + ? WHERE user_id = ? AND product_id = ?",
-          [quantity, userId, productId],
-          (updateErr) => {
-            if (updateErr) {
-              console.error("Failed to update cart:", updateErr);
-              return res.status(500).json({ success: false, message: "Failed to update cart." });
-            }
-            console.log("Cart updated successfully");
-            return res.status(200).json({ success: true, message: "Cart updated successfully." });
-          }
-        );
-      } else {
-        // Insert new entry
-        pool.query(
-          "INSERT INTO carts (user_id, product_id, quantity) VALUES (?, ?, ?)",
-          [userId, productId, quantity],
-          (insertErr) => {
-            if (insertErr) {
-              console.error("Failed to add product to cart:", insertErr);
-              return res.status(500).json({ success: false, message: "Failed to add product to cart." });
-            }
-            console.log("Product added to cart successfully");
-            return res.status(200).json({ success: true, message: "Product added to cart successfully." });
-          }
-        );
-      }
-    }
-  );
 });
 
-
-
-// ********** Fetch cart details **********
-app.get("/getcart", verifyToken, (req, res) => {
-  const userId = req.user.userId; // Extract user ID from token
-
-  console.log("Fetching cart for user:", userId);
-
-  pool.query(
-    "SELECT p.*, c.quantity FROM carts c JOIN products p ON c.product_id = p.id WHERE c.user_id = ?",
-    [userId],
-    (err, results) => {
-      if (err) {
-        console.error("Database error:", err);
-        return res.status(500).json({ success: false, message: "Database error." });
-      }
-
-      console.log("Cart fetched successfully:", results);
-      res.status(200).json({ success: true, cart: results });
-    }
-  );
+// Delete Product
+app.delete("/deleteproduct/:id", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    await Product.findByIdAndDelete(req.params.id);
+    res.status(200).json({ success: true, message: "Product deleted successfully." });
+  } catch (error) {
+    console.error("Error deleting product:", error);
+    res.status(500).json({ success: false, message: "Server error." });
+  }
 });
 
-// ********** update cart details **********
-app.put("/updatecart", verifyToken, (req, res) => {
-  const { productId, quantity } = req.body;
-  const userId = req.user.userId;
+// Update Product
+app.put("/updateproduct/:id", upload.single("image"), verifyToken, async (req, res) => {
+  try {
+    const { name, details, originalprice, offerprice } = req.body;
+    const image = req.file ? req.file.filename : null;
 
-  console.log("Updating cart:", { userId, productId, quantity });
-
-  pool.query(
-    "UPDATE carts SET quantity = quantity + ? WHERE user_id = ? AND product_id = ?",
-    [quantity, userId, productId],
-    (err, result) => {
-      if (err) {
-        console.error("Failed to update cart:", err);
-        return res.status(500).json({ success: false, message: "Database error." });
-      }
-      res.status(200).json({ success: true, message: "Cart updated successfully." });
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: "Product not found." });
     }
-  );
+
+    product.name = name;
+    product.details = details;
+    product.originalprice = originalprice;
+    product.offerprice = offerprice;
+    if (image) {
+      product.image = image;
+    }
+
+    await product.save();
+    res.status(200).json({ success: true, message: "Product updated successfully." });
+  } catch (error) {
+    console.error("Error updating product:", error);
+    res.status(500).json({ success: false, message: "Server error." });
+  }
 });
 
-
-// ********** delete cart details **********
-app.delete("/removecart/:productId", verifyToken, (req, res) => {
-  const userId = req.user.userId;
-  const productId = req.params.productId;
-
-  console.log("Removing item from cart:", { userId, productId });
-
-  pool.query(
-    "DELETE FROM carts WHERE user_id = ? AND product_id = ?",
-    [userId, productId],
-    (err, result) => {
-      if (err) {
-        console.error("Failed to remove cart item:", err);
-        return res.status(500).json({ success: false, message: "Database error." });
-      }
-      res.status(200).json({ success: true, message: "Product removed from cart." });
+// Get Product
+app.get("/getproduct/:id", async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: "Product not found." });
     }
-  );
+    res.json(product);
+  } catch (error) {
+    console.error("Error fetching product:", error);
+    res.status(500).json({ success: false, message: "Server error." });
+  }
 });
 
+// Cart Management
+app.post("/addtocart", verifyToken, async (req, res) => {
+  try {
+    const { productId, quantity } = req.body;
+    const userId = req.user.userId;
 
-// ********** Start Server **********
-app.listen(3001, () => console.log("Running backend server on port 3001"));
+    const existingCartItem = await Cart.findOne({ userId, productId });
+    if (existingCartItem) {
+      existingCartItem.quantity += quantity;
+      await existingCartItem.save();
+    } else {
+      const cartItem = new Cart({
+        userId,
+        productId,
+        quantity
+      });
+      await cartItem.save();
+    }
+
+    res.status(201).json({ success: true, message: "Added to cart successfully." });
+  } catch (error) {
+    console.error("Add to cart error:", error);
+    res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
+// Get Cart Items
+app.get("/getcart", verifyToken, async (req, res) => {
+  try {
+    const cartItems = await Cart.find({ userId: req.user.userId }).populate('productId');
+    res.json({ success: true, cart: cartItems });
+  } catch (error) {
+    console.error("Error fetching cart:", error);
+    res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
+// Update Cart
+app.put("/updatecart", verifyToken, async (req, res) => {
+  try {
+    const { productId, quantity } = req.body;
+    const userId = req.user.userId;
+
+    const cartItem = await Cart.findOne({ userId, productId });
+    if (!cartItem) {
+      return res.status(404).json({ success: false, message: "Cart item not found." });
+    }
+
+    cartItem.quantity += quantity;
+    await cartItem.save();
+    res.status(200).json({ success: true, message: "Cart updated successfully." });
+  } catch (error) {
+    console.error("Error updating cart:", error);
+    res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
+// Remove Cart Item
+app.delete("/removecart/:productId", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const productId = req.params.productId;
+
+    await Cart.findOneAndDelete({ userId, productId });
+    res.status(200).json({ success: true, message: "Product removed from cart." });
+  } catch (error) {
+    console.error("Error removing cart item:", error);
+    res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
+// Get Users
+app.get("/getusers", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const users = await User.find();
+    res.json({ success: true, data: users });
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
+// Delete User
+app.delete("/delete/:id", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    await User.findByIdAndDelete(req.params.id);
+    res.status(200).json({ success: true, message: "User deleted successfully." });
+  } catch (error) {
+    console.error("Error deleting user:", error);
+    res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
+// Update User
+app.put("/update/:id", verifyToken, async (req, res) => {
+  try {
+    const { fname, lname, email } = req.body;
+    const userId = req.params.id;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    user.fname = fname;
+    user.lname = lname;
+    user.email = email;
+    await user.save();
+    res.status(200).json({ success: true, message: "User updated successfully." });
+  } catch (error) {
+    console.error("Error updating user:", error);
+    res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
+const PORT = 3001;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
