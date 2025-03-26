@@ -1,7 +1,7 @@
 {
   "name": "pedrolabs",
   "private": true,
-  "proxy": "http://localhost:3001",
+  "proxy": "petrotestapi.vercel.app",
   "version": "0.0.0",
   "type": "module",
   "scripts": {

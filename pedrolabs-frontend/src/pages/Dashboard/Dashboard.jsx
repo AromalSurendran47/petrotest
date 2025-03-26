@@ -7,7 +7,7 @@ import Preloader from "../../Components/Preloader/Preloader";
 import Header from "../../Components/Header";
 
 function Dashboard() {
-  const baseURL = "http://localhost:3001";
+  const baseURL = "petrotestapi.vercel.app";
 
   // State Management
   const [users, setUsers] = useState([]);

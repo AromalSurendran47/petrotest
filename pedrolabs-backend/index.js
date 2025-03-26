@@ -16,6 +16,7 @@ app.use("/uploads", express.static("uploads"));
 app.use(
   cors({
     methods: ["GET", "POST", "PUT", "DELETE"],
+    origin:["petrotestapi.vercel.app"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
